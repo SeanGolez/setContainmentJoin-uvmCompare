@@ -74,16 +74,14 @@ int main(int argc, char *argv[])
     printf("Generation time: %f\n", tend - tstart);
 
 #elif MODE == 2
-    int2 * resultSet;
-    unsigned long long int resultSetSize;
+    vector<int2> resultSet;
 
     double tstart = omp_get_wtime();
-    setContainmentJoinGPUUVM(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet, &resultSetSize);
-    printf("GPU Result set has %zu elements\n", resultSetSize);
+    setContainmentJoinGPUUVM(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet);
+    printf("GPU Result set has %zu elements\n", resultSet.size());
     double tend = omp_get_wtime();
     printf("Generation time: %f\n", tend - tstart);
-
-    cudaFree(resultSet);
+    
 #endif
 
     ////////////////////////////////////////////////////////////////////////////
