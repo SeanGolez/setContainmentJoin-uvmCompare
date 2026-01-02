@@ -2,6 +2,7 @@
 #include "kernel.h"
 #include "params.h"
 
+#include "omp.h"
 #include <vector>
 #include <string>
 #include <stdio.h>
@@ -12,6 +13,7 @@
 #include <cstdint>
 #include <thrust/device_ptr.h>
 #include <thrust/sort.h>
+#include <parallel/algorithm>
 
 void importDataset(char * filename, vector<vector<int>> * sets, int * totalElements, int * smallestElement, int * largestElement );
 

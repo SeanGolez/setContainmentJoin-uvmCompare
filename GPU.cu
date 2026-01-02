@@ -12,7 +12,7 @@ inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=t
    }
 }
 
-void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int * S_data, int * S_offsets, int S_size, int S_elementCount, int largestElement, vector<int2> * resultSet)
+void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int * S_data, int * S_offsets, int S_size, int S_elementCount, int largestElement, int2 ** resultSet, unsigned long long int * resultSetSize)
 {
     ////////////////////////////////////////////////////////////////////////////
     // Allocate memory
@@ -72,6 +72,8 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
     unsigned long long int S_batchSize = S_size / numBatches;
 
     printf("numBatches: %d\n", numBatches);
+
+    int batchesThatHaveOneMore = S_size - (S_batchSize * numBatches); //batch number 0-
     ////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////////////////////////////////////////////////////
@@ -97,28 +99,24 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
         checkError(cudaMallocHost((void **) &batchResultSet[i], sizeof(int2)*GPUBUFFERSIZE));
 	}
 
-    resultSet->reserve(estimatedResultSetSize);
+    *resultSet = new int2[estimatedResultSetSize];
+    *resultSetSize = 0;
 
     #pragma omp parallel for schedule(static,1) num_threads(GPUSTREAMS)
-    for (int i=0; i<numBatches+1; i++)
+    for (int i=0; i<numBatches; i++)
     {
         unsigned int tid = omp_get_thread_num();
 
-        int thread_batchOffset = i * S_batchSize;
-
-        int thread_batchSize;
-        if (i == numBatches)
+        int thread_batchOffset = (i * S_batchSize);
+        int thread_batchSize = S_batchSize;
+        if (i<batchesThatHaveOneMore)
         {
-            thread_batchSize = S_size - thread_batchOffset;
+            thread_batchOffset += i;
+            thread_batchSize += 1;
         }
         else
         {
-            thread_batchSize = S_batchSize;
-        }
-
-        if( thread_batchSize == 0 )
-        {
-            continue;
+            thread_batchOffset += batchesThatHaveOneMore;
         }
 
         checkError(cudaMemsetAsync(dev_batchResultSetSize[tid], 0, sizeof(unsigned long long int), stream[tid]));
@@ -134,12 +132,20 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
         checkError(cudaMemcpy(&batchResultSetSize, dev_batchResultSetSize[tid], sizeof(unsigned long long int), cudaMemcpyDeviceToHost));
         checkError(cudaMemcpy(batchResultSet[tid], dev_batchResultSet[tid], sizeof(int2) * batchResultSetSize, cudaMemcpyDeviceToHost)); 
 
+        printf("Result set size of batch %d: %llu\n", i, batchResultSetSize);
+        
+        unsigned long long int resultSetStart;
         #pragma omp critical
         {
-            resultSet->insert(resultSet->end(), batchResultSet[tid], batchResultSet[tid] + batchResultSetSize);
+            resultSetStart = *resultSetSize;
+            *resultSetSize += batchResultSetSize;
         }
 
-        printf("Result set size of batch %d: %llu\n", i, batchResultSetSize);
+        #pragma parallel for num_threads(8)
+        for (unsigned long long int j=0; j<batchResultSetSize; j++)
+        {
+            (*resultSet)[resultSetStart+j] = batchResultSet[tid][j];
+        }
     }
 
     for (int i=0; i<GPUSTREAMS; i++)
@@ -157,7 +163,7 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
     cudaFree(dev_S_offsets);
 }
 
-void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S_data, int * S_offsets, int S_size, int S_elementCount, int largestElement, vector<int2> * resultSet)
+void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S_data, int * S_offsets, int S_size, int S_elementCount, int largestElement, int2 ** resultSet, unsigned long long int * resultSetSize)
 {
     ////////////////////////////////////////////////////////////////////////////
     // Allocate memory
@@ -177,7 +183,6 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     checkError(cudaMemcpy(dev_S_data, S_data, S_totalElements * sizeof(int), cudaMemcpyHostToDevice));
     checkError(cudaMemcpy(dev_S_offsets, S_offsets, (S_size + 1) * sizeof(int), cudaMemcpyHostToDevice));
 
-    unsigned long long int resultSetSize;
     unsigned long long int * dev_resultSetSize;
     checkError(cudaMalloc((void**)&dev_resultSetSize, sizeof(unsigned long long int)));
     checkError(cudaMemset(dev_resultSetSize, 0, sizeof(unsigned long long int)));
@@ -185,10 +190,7 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     unsigned long long int allocatedElements = ((unsigned long long int)OUTPUTUVMBUFFERSIZE * (1024 * 1024 * 1024)) / sizeof(int2);
 	printf("\nNumber of allocated result set elements in managed memory: %llu\n", allocatedElements);
 
-    int2 * uvm_resultSet;
-    checkError(cudaMallocManaged((void **)&uvm_resultSet, sizeof(int2)*allocatedElements));
-
-    resultSet->reserve(allocatedElements);
+    checkError(cudaMallocManaged((void **)resultSet, sizeof(int2)*allocatedElements));
 
     // checkGPUMem();
     ////////////////////////////////////////////////////////////////////////////
@@ -198,18 +200,11 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     const int TOTALBLOCKS = (R_size + BLOCKSIZE - 1) / BLOCKSIZE;
     printf("\ntotal blocks: %d\n",TOTALBLOCKS);
 
-    kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, R_size, dev_S_data, dev_S_offsets, 0, S_size, uvm_resultSet, dev_resultSetSize);
+    kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, R_size, dev_S_data, dev_S_offsets, 0, S_size, *resultSet, dev_resultSetSize);
     cout<<"** ERROR FROM KERNEL LAUNCH OF MAIN KERNEL: "<<cudaGetLastError()<<endl;
     checkError(cudaDeviceSynchronize());
 
-    checkError(cudaMemcpy(&resultSetSize, dev_resultSetSize, sizeof(unsigned long long int), cudaMemcpyDeviceToHost));
-    
-    resultSet->resize(resultSetSize);
-    #pragma omp parallel for num_threads(8)
-    for (int i=0; i<resultSetSize; i++)
-    {
-        (*resultSet)[i] = uvm_resultSet[i];
-    }
+    checkError(cudaMemcpy(resultSetSize, dev_resultSetSize, sizeof(unsigned long long int), cudaMemcpyDeviceToHost));
 
     ////////////////////////////////////////////////////////////////////////////
 
@@ -218,7 +213,6 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     cudaFree(dev_S_data);
     cudaFree(dev_S_offsets);
     cudaFree(dev_resultSetSize);
-    cudaFree(uvm_resultSet);
 }
 
 void checkGPUMem()

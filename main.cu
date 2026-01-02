@@ -2,8 +2,20 @@
 
 using namespace std;
 
+bool compareInt2(const int2& a, const int2& b)
+{
+    if (a.x != b.x)
+    {
+        return a.x < b.x;
+    }
+    return a.y < b.y;
+}
+
+
 int main(int argc, char *argv[])
 {
+    omp_set_max_active_levels(3);
+
     ////////////////////////////////////////////////////////////////////////////
     // read input
     if (argc!=3)
@@ -55,34 +67,63 @@ int main(int argc, char *argv[])
     // compute result set
     printf("Computing result set...\n");
 
+    double total_tstart = omp_get_wtime();
+
 #if MODE == 0
     vector<int2> resultSet;
 
-    double tstart = omp_get_wtime();
+    double algorithm_tstart = omp_get_wtime();
     setContainmentJoinCPU(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet);
     printf("CPU Result set has %d elements\n", resultSet.size());
-    double tend = omp_get_wtime();
-    printf("Generation time: %f\n", tend - tstart);
+    double algorithm_tend = omp_get_wtime();
+    printf("Generation time: %f\n", algorithm_tend - algorithm_tstart);
+
+    double sort_tstart = omp_get_wtime();
+	fprintf(stderr, "Sorting pairs...\n");
+	__gnu_parallel::sort(resultSet.begin(), resultSet.end(), compareInt2);
+	double sort_tend = omp_get_wtime();
+	printf("Sort time: %f\n", (sort_tend - sort_tstart));
 
 #elif MODE == 1
-    vector<int2> resultSet;
+    int2 * resultSet; // C++ style array
+    unsigned long long int resultSetSize;
 
-    double tstart = omp_get_wtime();
-    setContainmentJoinGPUBatched(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet);
-    printf("GPU Result set has %zu elements\n", resultSet.size());
-    double tend = omp_get_wtime();
-    printf("Generation time: %f\n", tend - tstart);
+    double algorithm_tstart = omp_get_wtime();
+    setContainmentJoinGPUBatched(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet, &resultSetSize);
+    printf("GPU Result set has %zu elements\n", resultSetSize);
+    double algorithm_tend = omp_get_wtime();
+    printf("Generation time: %f\n", algorithm_tend - algorithm_tstart);
+
+    double sort_tstart = omp_get_wtime();
+	fprintf(stderr, "Sorting pairs...\n");
+	__gnu_parallel::sort(resultSet, resultSet+resultSetSize, compareInt2);
+	double sort_tend = omp_get_wtime();
+	printf("Sort time: %f\n", (sort_tend - sort_tstart));
+
+    delete[] resultSet;
 
 #elif MODE == 2
-    vector<int2> resultSet;
+    int2 * resultSet; // CUDA UVM buffer
+    unsigned long long int resultSetSize;
 
-    double tstart = omp_get_wtime();
-    setContainmentJoinGPUUVM(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet);
-    printf("GPU Result set has %zu elements\n", resultSet.size());
-    double tend = omp_get_wtime();
-    printf("Generation time: %f\n", tend - tstart);
+    double algorithm_tstart = omp_get_wtime();
+    setContainmentJoinGPUUVM(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet, &resultSetSize);
+    printf("GPU Result set has %zu elements\n", resultSetSize);
+    double algorithm_tend = omp_get_wtime();
+    printf("Generation time: %f\n", algorithm_tend - algorithm_tstart);
+
+    double sort_tstart = omp_get_wtime();
+	fprintf(stderr, "Sorting pairs...\n");
+	__gnu_parallel::sort(resultSet, resultSet+resultSetSize, compareInt2);
+	double sort_tend = omp_get_wtime();
+	printf("Sort time: %f\n", (sort_tend - sort_tstart));
     
+    cudaFree(resultSet);
+
 #endif
+
+    double total_tend = omp_get_wtime();
+    printf("Total time: %f\n", total_tend - total_tstart);
 
     ////////////////////////////////////////////////////////////////////////////
 
