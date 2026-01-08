@@ -6,6 +6,6 @@
 
 #define OUTPUTUVMBUFFERSIZE 200 // GB
 
-#define SAMPLERATE 0.015
+#define SAMPLERATE 0.01
 
 #define GPUSTREAMS 3

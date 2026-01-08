@@ -84,18 +84,13 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
 	    cudaStreamCreateWithFlags(&stream[i], cudaStreamNonBlocking);
 	}	
 
-    int2 * dev_batchResultSet[GPUSTREAMS];
     unsigned long long int * dev_batchResultSetSize[GPUSTREAMS];
+    int2 * dev_batchResultSet[GPUSTREAMS];
+	int2 * batchResultSet[GPUSTREAMS];  // pinned memory
 	for (int i=0; i<GPUSTREAMS; i++)
-	{
-		checkError(cudaMalloc((void **)&dev_batchResultSet[i], sizeof(int2)*GPUBUFFERSIZE));
+	{   
         checkError(cudaMalloc((void **)&dev_batchResultSetSize[i], sizeof(unsigned long long int)));
-	}
-
-    // pinned memory
-	int2 * batchResultSet[GPUSTREAMS];
-	for (int i=0; i<GPUSTREAMS; i++)
-	{
+		checkError(cudaMalloc((void **)&dev_batchResultSet[i], sizeof(int2)*GPUBUFFERSIZE));
         checkError(cudaMallocHost((void **) &batchResultSet[i], sizeof(int2)*GPUBUFFERSIZE));
 	}
 
@@ -150,6 +145,7 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
 
     for (int i=0; i<GPUSTREAMS; i++)
     {
+        cudaStreamDestroy(stream[i]);
         cudaFree(dev_batchResultSet[i]);
         cudaFree(dev_batchResultSetSize[i]);
         cudaFree(batchResultSet[i]);
