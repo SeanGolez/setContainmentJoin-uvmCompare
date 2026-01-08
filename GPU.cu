@@ -43,12 +43,12 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
     checkError(cudaMalloc((void**)&dev_resultSetSize, sizeof(unsigned long long int)));
     checkError(cudaMemset(dev_resultSetSize, 0, sizeof(unsigned long long int)));
 
-    int S_offsetRate=1.0 / SAMPLERATE;
+    int R_offsetRate=1.0 / SAMPLERATE;
 
-    const int TOTALBLOCKSBATCHEST = (R_size + BLOCKSIZE - 1) / BLOCKSIZE;
+    const int TOTALBLOCKSBATCHEST = ((R_size * SAMPLERATE) + BLOCKSIZE - 1) / BLOCKSIZE;
     printf("\ntotal blocks: %d\n",TOTALBLOCKSBATCHEST);
 
-    kernelCountResultSetSize<<<TOTALBLOCKSBATCHEST, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, R_size, dev_S_data, dev_S_offsets, S_offsetRate, S_size, dev_resultSetSize);
+    kernelCountResultSetSize<<<TOTALBLOCKSBATCHEST, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, R_offsetRate, R_size, dev_S_data, dev_S_offsets, S_size, dev_resultSetSize);
     cout<<"** ERROR FROM KERNEL LAUNCH OF BATCH ESTIMATOR: "<<cudaGetLastError()<<endl;
     checkError(cudaDeviceSynchronize());
 
@@ -56,7 +56,7 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
 
     cudaFree(dev_resultSetSize);
 
-    unsigned long long int estimatedResultSetSize = sampleResultSetSize * S_offsetRate * 1.15;
+    unsigned long long int estimatedResultSetSize = sampleResultSetSize * R_offsetRate * 1.15;
     printf("estimatedResultSetSize: %llu\n", estimatedResultSetSize);
     ////////////////////////////////////////////////////////////////////////////
     
@@ -68,12 +68,12 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
         numBatches = 3;
     }
 
-    // batch on S
-    unsigned long long int S_batchSize = S_size / numBatches;
+    // batch on R
+    unsigned long long int R_batchSize = R_size / numBatches;
 
     printf("numBatches: %d\n", numBatches);
 
-    int batchesThatHaveOneMore = S_size - (S_batchSize * numBatches); //batch number 0-
+    int batchesThatHaveOneMore = R_size - (R_batchSize * numBatches); //batch number 0-
     ////////////////////////////////////////////////////////////////////////////
 
     ////////////////////////////////////////////////////////////////////////////
@@ -107,8 +107,8 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
     {
         unsigned int tid = omp_get_thread_num();
 
-        int thread_batchOffset = (i * S_batchSize);
-        int thread_batchSize = S_batchSize;
+        int thread_batchOffset = (i * R_batchSize);
+        int thread_batchSize = R_batchSize;
         if (i<batchesThatHaveOneMore)
         {
             thread_batchOffset += i;
@@ -121,10 +121,10 @@ void setContainmentJoinGPUBatched(int * R_data, int * R_offsets, int R_size, int
 
         checkError(cudaMemsetAsync(dev_batchResultSetSize[tid], 0, sizeof(unsigned long long int), stream[tid]));
 
-        const int TOTALBLOCKS = (R_size + BLOCKSIZE - 1) / BLOCKSIZE;
+        const int TOTALBLOCKS = (thread_batchSize + BLOCKSIZE - 1) / BLOCKSIZE;
         printf("\ntotal blocks: %d\n",TOTALBLOCKS);
 
-        kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE, 0, stream[tid]>>>(dev_R_data, dev_R_offsets, R_size, dev_S_data, dev_S_offsets, thread_batchOffset, thread_batchSize, dev_batchResultSet[tid], dev_batchResultSetSize[tid]);
+        kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE, 0, stream[tid]>>>(dev_R_data, dev_R_offsets, thread_batchOffset, thread_batchSize, dev_S_data, dev_S_offsets, S_size, dev_batchResultSet[tid], dev_batchResultSetSize[tid]);
         cout<<"** ERROR FROM KERNEL LAUNCH OF MAIN KERNEL: "<<cudaGetLastError()<<endl;
         checkError(cudaStreamSynchronize(stream[tid]));
 
@@ -200,7 +200,7 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     const int TOTALBLOCKS = (R_size + BLOCKSIZE - 1) / BLOCKSIZE;
     printf("\ntotal blocks: %d\n",TOTALBLOCKS);
 
-    kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, R_size, dev_S_data, dev_S_offsets, 0, S_size, *resultSet, dev_resultSetSize);
+    kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, 0, R_size, dev_S_data, dev_S_offsets, S_size, *resultSet, dev_resultSetSize);
     cout<<"** ERROR FROM KERNEL LAUNCH OF MAIN KERNEL: "<<cudaGetLastError()<<endl;
     checkError(cudaDeviceSynchronize());
 
