@@ -2,16 +2,6 @@
 
 using namespace std;
 
-bool compareInt2(const int2& a, const int2& b)
-{
-    if (a.x != b.x)
-    {
-        return a.x < b.x;
-    }
-    return a.y < b.y;
-}
-
-
 int main(int argc, char *argv[])
 {
     omp_set_max_active_levels(3);
@@ -90,20 +80,20 @@ int main(int argc, char *argv[])
     int2 * resultSet; // C++ style array
     unsigned long long int resultSetSize;
 
-    // run algorithm
+    // run algorithm (it will sort)
     double algorithm_tstart = omp_get_wtime();
     setContainmentJoinGPUBatched(R_data, R_offsets, R_sets.size(), S_data, S_offsets, S_sets.size(), S_elementCount, largestElementReindexed, &resultSet, &resultSetSize);
     printf("GPU Result set has %llu elements\n", resultSetSize);
     double algorithm_tend = omp_get_wtime();
     printf("Generation time: %f\n", algorithm_tend - algorithm_tstart);
 
-    // sort result set
-    double sort_tstart = omp_get_wtime();
-	fprintf(stderr, "Sorting pairs...\n");
-	__gnu_parallel::sort(resultSet, resultSet+resultSetSize, compareInt2);
-	double sort_tend = omp_get_wtime();
-	printf("Sort time: %f\n", (sort_tend - sort_tstart));
-
+    // access result set
+    double read_tstart = omp_get_wtime();
+	fprintf(stderr, "Read results on host...\n");
+    touchArray(resultSet, resultSetSize);
+	double read_tend = omp_get_wtime();
+	printf("Read time: %f\n", (read_tend - read_tstart));
+    
     delete[] resultSet;
 
 #elif MODE == 2
@@ -117,12 +107,12 @@ int main(int argc, char *argv[])
     double algorithm_tend = omp_get_wtime();
     printf("Generation time: %f\n", algorithm_tend - algorithm_tstart);
 
-    // sort result set
-    double sort_tstart = omp_get_wtime();
-	fprintf(stderr, "Sorting pairs...\n");
-	__gnu_parallel::sort(resultSet, resultSet+resultSetSize, compareInt2);
-	double sort_tend = omp_get_wtime();
-	printf("Sort time: %f\n", (sort_tend - sort_tstart));
+    // access result set
+    double read_tstart = omp_get_wtime();
+	fprintf(stderr, "Read results on host...\n");
+    touchArray(resultSet, resultSetSize);
+	double read_tend = omp_get_wtime();
+	printf("Read time: %f\n", (read_tend - read_tstart));
     
     cudaFree(resultSet);
 

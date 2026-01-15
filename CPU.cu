@@ -91,3 +91,14 @@ void setContainmentJoinCPU(int * R_data, int * R_offsets, int R_size, int * S_da
 
     computeResultSetCPU(R_data, R_offsets, R_size, S_size, I_data, I_offsets, resultSet);
 }
+
+void touchArray(int2 *array, unsigned long long int length)
+{
+    volatile int sink_x, sink_y;
+
+    for (unsigned long long int i = 0; i < length; i++)
+    {
+        sink_x = array[i].x;
+        sink_y = array[i].y;
+    }
+}

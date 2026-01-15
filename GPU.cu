@@ -1,5 +1,18 @@
 #include "GPU.h"
 
+struct compare_int2{
+	__host__ __device__ bool operator()(int2 a,int2 b){return (a.x!=b.x) ? (a.x<b.x):(a.y<b.y);}
+};
+
+bool compareInt2(const int2& a, const int2& b)
+{
+    if (a.x != b.x)
+    {
+        return a.x < b.x;
+    }
+    return a.y < b.y;
+}
+
 using namespace std;
 
 #define checkError(ans) { gpuAssert((ans), __FILE__, __LINE__); }
@@ -180,7 +193,7 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     checkError(cudaMemcpy(dev_S_offsets, S_offsets, (S_size + 1) * sizeof(int), cudaMemcpyHostToDevice));
 
     unsigned long long int * dev_resultSetSize;
-    checkError(cudaMalloc((void**)&dev_resultSetSize, sizeof(unsigned long long int)));
+    checkError(cudaMallocManaged((void**)&dev_resultSetSize, sizeof(unsigned long long int)));
     checkError(cudaMemset(dev_resultSetSize, 0, sizeof(unsigned long long int)));
 
     unsigned long long int allocatedElements = ((unsigned long long int)OUTPUTUVMBUFFERSIZE * (1024 * 1024 * 1024)) / sizeof(int2);
@@ -196,11 +209,29 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     const int TOTALBLOCKS = (R_size + BLOCKSIZE - 1) / BLOCKSIZE;
     printf("\ntotal blocks: %d\n",TOTALBLOCKS);
 
+    cudaEvent_t kernelStart;
+	cudaEvent_t kernelStop;
+    cudaEventCreate(&kernelStart);
+	cudaEventCreate(&kernelStop);
+
+	cudaEventRecord(kernelStart);
     kernelFillResultSet<<<TOTALBLOCKS, BLOCKSIZE>>>(dev_R_data, dev_R_offsets, 0, R_size, dev_S_data, dev_S_offsets, S_size, *resultSet, dev_resultSetSize);
     cout<<"** ERROR FROM KERNEL LAUNCH OF MAIN KERNEL: "<<cudaGetLastError()<<endl;
-    checkError(cudaDeviceSynchronize());
+    cudaEventRecord(kernelStop);
 
-    checkError(cudaMemcpy(resultSetSize, dev_resultSetSize, sizeof(unsigned long long int), cudaMemcpyDeviceToHost));
+#if PROBEANDSTORE == 1
+    probeAndStore(*resultSet, dev_resultSetSize, &kernelStop);
+#endif
+
+    cudaEventSynchronize(kernelStop);
+
+	float milliseconds;
+	cudaEventElapsedTime(&milliseconds, kernelStart, kernelStop);
+	printf("\nKernel execution time: %f\n", (milliseconds / 1000));
+	cudaEventDestroy(kernelStart);
+	cudaEventDestroy(kernelStop);
+
+    *resultSetSize = *dev_resultSetSize;
 
     ////////////////////////////////////////////////////////////////////////////
 
@@ -209,6 +240,61 @@ void setContainmentJoinGPUUVM(int * R_data, int * R_offsets, int R_size, int * S
     cudaFree(dev_S_data);
     cudaFree(dev_S_offsets);
     cudaFree(dev_resultSetSize);
+}
+
+void probeAndStore(int2 * array, unsigned long long int * cnt, cudaEvent_t * kernelStop)
+{
+	// set bounds
+	uint64_t lowerBound = 0;
+	uint64_t upperBound = 0;
+
+	// get the number of elements in one page
+	unsigned int elemsPerPage = ((PAGESIZE) * (1024)) / sizeof(int2);
+	printf("\nelemsPerPage: %u", elemsPerPage);
+
+	// keep track of the number of pages stored
+	unsigned long long int pagesStored = 0;
+
+	unsigned long long int localCnt;
+	unsigned long long int localPagesIdx;
+
+	// loop while kernel is not complete
+	while( cudaEventQuery(*kernelStop) == cudaErrorNotReady )
+	{
+		// sleep for SLEEPSEC seconds
+		usleep(SLEEPSEC*1000000);
+
+		// read cnt
+		localCnt = *cnt;
+		// printf("\nNum elems generated in array on GPU: %llu", localCnt);
+
+		// convert count to pages
+		localPagesIdx = localCnt  / elemsPerPage;
+		// printf("\nPage index being updated on GPU: %llu", localPagesIdx);
+
+		// set bounds
+		lowerBound = pagesStored * elemsPerPage;
+		upperBound = localPagesIdx * elemsPerPage;
+
+		// store
+		// printf("\nStoring %lu elements in bounds [%lu, %lu)", (upperBound-lowerBound), lowerBound, upperBound);
+        touchArray(array + lowerBound, upperBound - lowerBound);
+
+		// update pages sorted count
+		pagesStored = localPagesIdx;
+	}
+
+	// read cnt
+	localCnt = *cnt;
+	// printf("\n[Leftover] Num elems generated in array on GPU: %llu", localCnt);
+
+	// set bounds
+	lowerBound = pagesStored * elemsPerPage;
+	upperBound = localCnt;
+
+	// store
+    // printf("\nStoring %lu elements in bounds [%lu, %lu)", (upperBound-lowerBound), lowerBound, upperBound);
+    touchArray(array + lowerBound, upperBound - lowerBound);
 }
 
 void checkGPUMem()
